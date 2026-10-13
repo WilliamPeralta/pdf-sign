@@ -1,0 +1,186 @@
+import json
+import subprocess
+import sys
+
+import pdfplumber
+import pytest
+from pypdf import PdfReader
+
+from pdf_sign.geometry import user_to_visual_point, visual_to_user_point
+
+
+def run_cli(*args):
+    return subprocess.run([sys.executable, "-m", "pdf_sign", *args], capture_output=True, text=True)
+
+
+def sign(pdf, png, *extra):
+    r = run_cli("sign", str(pdf), "--signature", str(png), *extra)
+    return r, (json.loads(r.stdout) if r.stdout else None)
+
+
+def image_count(path, page=0):
+    xo = PdfReader(str(path)).pages[page]["/Resources"].get("/XObject") or {}
+    return sum(1 for v in xo.values() if v.get_object().get("/Subtype") == "/Image")
+
+
+def ink_bbox(path, page=0, scale=2):
+    """Bounding box of the signature ink (dark blue) in PDF points, top-left origin (pdfplumber frame)."""
+    with pdfplumber.open(path) as pdf:
+        pg = pdf.pages[page]
+        img = pg.to_image(resolution=72 * scale).original.convert("RGB")
+    xs, ys = [], []
+    for y in range(img.height):
+        for x in range(img.width):
+            r, g, b = img.getpixel((x, y))
+            if b > 90 and r < 60 and g < 80:
+                xs.append(x)
+                ys.append(y)
+    assert xs, "no signature ink found in render"
+    return min(xs) / scale, min(ys) / scale, max(xs) / scale, max(ys) / scale
+
+
+def test_auto_sign_default_output(anchor_underscore_pdf, signature_png):
+    r, out = sign(anchor_underscore_pdf, signature_png)
+    assert r.returncode == 0, r.stderr
+    dest = anchor_underscore_pdf.with_name("anchor_underscore.signed.pdf")
+    assert dest.exists() and out["output"] == str(dest)
+    assert image_count(dest) == 1
+    assert image_count(anchor_underscore_pdf) == 0  # input untouched
+    p = out["placements"][0]
+    assert p["page"] == 1 and p["source"] == "line"
+    # ink sits on the underscore line (baseline y=500 -> top-based ~342), right of "Firma:"
+    x0, top, x1, bottom = ink_bbox(dest)
+    assert x0 > 100
+    # ink lies inside the stamp box, which starts just above the baseline (y=500)
+    _, sy0, _, sy1 = p["stamp"]
+    assert sy0 == pytest.approx(500, abs=4)
+    assert 841.89 - sy1 - 1 <= top and bottom <= 841.89 - sy0 + 1
+
+
+def test_keeps_aspect_ratio_and_fits_box(anchor_underscore_pdf, signature_png):
+    _, out = sign(anchor_underscore_pdf, signature_png)
+    x0, y0, x1, y1 = out["placements"][0]["stamp"]
+    assert (x1 - x0) / (y1 - y0) == pytest.approx(200 / 80, rel=0.01)
+    assert y1 - y0 <= 40.01
+
+
+def test_never_overwrites_without_force(anchor_underscore_pdf, signature_png, tmp_path):
+    out_pdf = tmp_path / "o.pdf"
+    out_pdf.write_bytes(b"existing")
+    r, _ = sign(anchor_underscore_pdf, signature_png, "-o", str(out_pdf))
+    assert r.returncode == 1 and json.loads(r.stderr)["error"]["code"] == "output_exists"
+    assert out_pdf.read_bytes() == b"existing"
+    r, _ = sign(anchor_underscore_pdf, signature_png, "-o", str(out_pdf), "--force")
+    assert r.returncode == 0 and image_count(out_pdf) == 1
+
+
+def test_refuses_output_equal_to_input(anchor_underscore_pdf, signature_png):
+    r, _ = sign(anchor_underscore_pdf, signature_png, "-o", str(anchor_underscore_pdf), "--force")
+    assert r.returncode == 1
+
+
+def test_no_candidate_exit_2(blank_pdf, signature_png):
+    r, _ = sign(blank_pdf, signature_png)
+    assert r.returncode == 2
+    assert json.loads(r.stderr)["error"]["code"] == "no_candidate"
+    assert not blank_pdf.with_name("blank.signed.pdf").exists()
+
+
+def test_invalid_image_exit_3(anchor_underscore_pdf, tmp_path):
+    bad = tmp_path / "bad.png"
+    bad.write_text("nope")
+    r, _ = sign(anchor_underscore_pdf, bad)
+    assert r.returncode == 3 and json.loads(r.stderr)["error"]["code"] == "invalid_image"
+
+
+def test_missing_signature_file(anchor_underscore_pdf, tmp_path):
+    r, _ = sign(anchor_underscore_pdf, tmp_path / "missing.png")
+    assert r.returncode == 1
+
+
+def test_manual_coordinates(blank_pdf, signature_png, tmp_path):
+    out = tmp_path / "m.pdf"
+    r, data = sign(blank_pdf, signature_png, "--page", "1", "--x", "100", "--y", "300",
+                   "--width", "100", "-o", str(out))
+    assert r.returncode == 0, r.stderr
+    assert data["placements"][0]["source"] == "manual"
+    assert data["placements"][0]["stamp"] == [100, 300, 200, 340]
+    x0, top, x1, bottom = ink_bbox(out)
+    assert x0 == pytest.approx(100 + 100 * 10 / 200, abs=3)  # ink starts 10px into the PNG
+    assert bottom == pytest.approx(841.89 - 300 - 100 * 30 / 200, abs=3)
+
+
+def test_manual_requires_all_coordinates(blank_pdf, signature_png):
+    r, _ = sign(blank_pdf, signature_png, "--page", "1", "--x", "100")
+    assert r.returncode == 1 and json.loads(r.stderr)["error"]["code"] == "usage"
+
+
+def test_manual_page_out_of_range(blank_pdf, signature_png):
+    r, _ = sign(blank_pdf, signature_png, "--page", "5", "--x", "1", "--y", "1")
+    assert r.returncode == 1
+
+
+def test_width_override_on_candidate(anchor_drawn_line_pdf, signature_png):
+    _, out = sign(anchor_drawn_line_pdf, signature_png, "--width", "80")
+    x0, y0, x1, y1 = out["placements"][0]["stamp"]
+    assert x1 - x0 == pytest.approx(80, abs=0.1)
+
+
+def test_acroform_field_is_filled_exactly(acroform_sig_pdf, signature_png):
+    _, out = sign(acroform_sig_pdf, signature_png)
+    p = out["placements"][0]
+    assert p["source"] == "acroform"
+    x0, y0, x1, y1 = p["stamp"]
+    assert 100 <= x0 and x1 <= 300 and 200 <= y0 and y1 <= 260
+
+
+def test_match_selects_signer_only(real_layout_pdf, signature_png):
+    r, out = sign(real_layout_pdf, signature_png, "--match", "accettazione|dipendente")
+    assert r.returncode == 0
+    assert out["placements"][0]["label"] == "Firma per accettazione"
+    assert len(out["placements"]) == 1
+
+
+def test_all_signs_best_spot_per_page(real_layout_pdf, signature_png):
+    dest = real_layout_pdf.with_name("all.pdf")
+    r, out = sign(real_layout_pdf, signature_png, "--all", "--match", "accettazione|dipendente",
+                  "-o", str(dest))
+    assert r.returncode == 0, r.stderr
+    assert [p["page"] for p in out["placements"]] == [1, 2]
+    assert image_count(dest, 0) == 1 and image_count(dest, 1) == 1
+
+
+def test_candidate_index_and_exclude(real_layout_pdf, signature_png):
+    _, out = sign(real_layout_pdf, signature_png, "--exclude", "datore|legale", "--candidate", "2")
+    assert out["placements"][0]["label"] == "Firma del dipendente"
+    r, _ = sign(real_layout_pdf, signature_png, "--candidate", "9", "--force")
+    assert r.returncode == 2
+
+
+def test_rotated_page_signature_is_upright(rotated_pdf, signature_png, tmp_path):
+    out = tmp_path / "rot.pdf"
+    r, data = sign(rotated_pdf, signature_png, "-o", str(out))
+    assert r.returncode == 0, r.stderr
+    # Rendered (displayed) frame: ink must be wider than tall (upright 2.5:1 image), left of x=300
+    x0, top, x1, bottom = ink_bbox(out)
+    assert (x1 - x0) > (bottom - top)
+    # displayed position matches the anchor: user (300,100) -> visual (100, 295 from bottom)
+    vx, vy = user_to_visual_point(90, [0, 0, 595.27, 841.89], 300, 100)
+    assert x0 > vx
+    assert bottom == pytest.approx(595.27 - vy, abs=15)  # on the line, in displayed top-based frame
+
+
+def test_offset_mediabox_signature_inside_page(offset_mediabox_pdf, signature_png, tmp_path):
+    out = tmp_path / "off.pdf"
+    r, data = sign(offset_mediabox_pdf, signature_png, "-o", str(out))
+    assert r.returncode == 0, r.stderr
+    x0, y0, x1, y1 = data["placements"][0]["stamp"]
+    assert 50 <= x0 and x1 <= 50 + 595.3 and 50 <= y0 and y1 <= 50 + 841.9
+    ink_bbox(out)  # visible in render
+
+
+def test_geometry_roundtrip():
+    crop = [10, 20, 610, 820]
+    for rot in (0, 90, 180, 270):
+        v = user_to_visual_point(rot, crop, 123, 456)
+        assert visual_to_user_point(rot, crop, *v) == pytest.approx((123, 456))

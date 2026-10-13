@@ -10,6 +10,7 @@ import warnings
 
 from . import __version__
 from .detect import detect_candidates, filter_candidates
+from .sign import sign_pdf
 from .errors import EXIT_NO_CANDIDATE, EXIT_OK, EXIT_USAGE, PdfSignError
 
 
@@ -38,6 +39,15 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("pdf")
     s.add_argument("--signature", required=True, help="PNG image (alpha supported).")
     s.add_argument("-o", "--output", help="Output PDF (default: <name>.signed.pdf).")
+    s.add_argument("--force", action="store_true", help="Overwrite an existing output file.")
+    s.add_argument("--candidate", type=int, help="1-based index in the detect list (default 1).")
+    s.add_argument("--all", action="store_true", help="Sign the best spot on every page.")
+    s.add_argument("--match", help="Only consider candidates whose label matches this regex.")
+    s.add_argument("--exclude", help="Ignore candidates whose label matches this regex.")
+    s.add_argument("--page", type=int, help="Manual placement: 1-based page.")
+    s.add_argument("--x", type=float, help="Manual placement: left edge, PDF points (user space).")
+    s.add_argument("--y", type=float, help="Manual placement: bottom edge, PDF points (user space).")
+    s.add_argument("--width", type=float, help="Signature width in points (aspect ratio kept).")
     return parser
 
 
@@ -52,7 +62,14 @@ def _run(args: argparse.Namespace) -> int:
         _emit({"file": args.pdf, "pages": pages, "candidates": [c.to_dict() for c in cands]})
         return EXIT_OK if cands else EXIT_NO_CANDIDATE
     if args.command == "sign":
-        raise PdfSignError("not_implemented", "sign is not implemented yet", EXIT_USAGE)
+        _emit(
+            sign_pdf(
+                args.pdf, args.signature, args.output, candidate=args.candidate, page=args.page,
+                x=args.x, y=args.y, width=args.width, all_pages=args.all, match=args.match,
+                exclude=args.exclude, force=args.force,
+            )
+        )
+        return EXIT_OK
     raise PdfSignError("usage", f"Unknown command {args.command}", EXIT_USAGE)
 
 
