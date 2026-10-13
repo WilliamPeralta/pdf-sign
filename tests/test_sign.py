@@ -51,9 +51,9 @@ def test_auto_sign_default_output(anchor_underscore_pdf, signature_png):
     # ink sits on the underscore line (baseline y=500 -> top-based ~342), right of "Firma:"
     x0, top, x1, bottom = ink_bbox(dest)
     assert x0 > 100
-    # ink lies inside the stamp box, which starts just above the baseline (y=500)
+    # ink lies inside the stamp box, which straddles the line (baseline y=500)
     _, sy0, _, sy1 = p["stamp"]
-    assert sy0 == pytest.approx(500, abs=4)
+    assert sy0 < 500 < sy1  # crosses the baseline line
     assert 841.89 - sy1 - 1 <= top and bottom <= 841.89 - sy0 + 1
 
 
@@ -184,3 +184,46 @@ def test_geometry_roundtrip():
     for rot in (0, 90, 180, 270):
         v = user_to_visual_point(rot, crop, 123, 456)
         assert visual_to_user_point(rot, crop, *v) == pytest.approx((123, 456))
+
+
+def _word_box(path, word, page=0):
+    with pdfplumber.open(path) as pdf:
+        for w in pdf.pages[page].extract_words():
+            if w["text"] == word:
+                return w
+    raise AssertionError(word)
+
+
+def _underscore_y(path, page=0, below=None):
+    with pdfplumber.open(path) as pdf:
+        ys = sorted(c["bottom"] for c in pdf.pages[page].chars if c["text"] == "_" and (below is None or c["bottom"] > below))
+    return ys[0]
+
+
+def test_stamp_straddles_line_without_covering_label(real_layout_pdf, signature_png):
+    _, out = sign(real_layout_pdf, signature_png, "--match", "accettazione")
+    sx0, sy0, sx1, sy1 = out["placements"][0]["stamp"]
+    s_top, s_bottom = 841.89 - sy1, 841.89 - sy0  # top-based frame
+    label = _word_box(real_layout_pdf, "accettazione")
+    line_y = _underscore_y(real_layout_pdf, below=label["bottom"])
+    assert s_top >= label["bottom"]  # never covers the label
+    assert s_top < line_y < s_bottom  # ink crosses the line
+    assert sy1 - sy0 >= 24 - 0.01
+    assert sx0 == pytest.approx(330, abs=2)  # left-aligned to the line start
+
+
+def test_stamp_above_label_layout_does_not_cover_label(tmp_path, signature_png):
+    from reportlab.pdfgen import canvas
+
+    p = tmp_path / "label_below.pdf"
+    c = canvas.Canvas(str(p))
+    c.setFont("Helvetica", 11)
+    c.drawString(72, 400, "____________________")
+    c.drawString(72, 388, "Il dichiarante")
+    c.save()
+    _, out = sign(p, signature_png)
+    pl = out["placements"][0]
+    _, sy0, _, sy1 = pl["stamp"]
+    label = _word_box(p, "dichiarante")
+    assert 841.89 - sy0 <= label["top"] + 0.01  # stamp bottom stays above the label top
+    assert sy1 - sy0 >= 24 - 0.01

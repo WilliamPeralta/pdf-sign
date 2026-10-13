@@ -43,7 +43,7 @@ Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are
 - `label`: the full anchor text line (underscores removed). `role`: hint from the label, `employer` (datore, legale rappresentante, timbro), `signer` (dipendente, accettazione, dichiarante, lavoratore) or `unknown`. It is only a hint: pass `--match`/`--exclude` to pick the right signer.
 - Anchors (IT/EN, case-insensitive, whole words only, so `firmatario`, `infirmare`, `designed` do not match): firma, firmato, signature, sign here, signed, il dichiarante, letto, confermato e sottoscritto, in fede, timbro e firma, firma del cliente, firma leggibile.
 - Line placement: underscore run (3+) or drawn horizontal line on the same line to the right of the anchor, just below it, or just above it. Underscore blanks inside prose (`Targa: ____`, `il dipendente ____ dichiara`) are never candidates.
-- The default box sits on the line, starts at the line's left edge and is 40 pt tall.
+- The box straddles the line like a handwritten signature (25% of the height below it), starts at the line's left edge and spans the line length. It is 40 pt tall, but never covers the anchor label: when the label is above the line the box top is clamped 2 pt below the label bottom (label under the line: box bottom 2 pt above the label top), with a 24 pt minimum height.
 
 ### `pdf-sign sign <pdf> --signature <png> [options]`
 
@@ -78,7 +78,7 @@ pdf-sign sign doc.pdf --signature sig.png --page 1 --x 100 --y 120 --width 140
 
 - Scanned / image-only PDFs have no text layer: no anchors, `detect` exits 2. OCR is future work (use manual coordinates meanwhile).
 - Sideways text on a rotated page whose content is not upright when displayed is not analysed.
-- Where the label sits only ~15 pt above the underscore line, the 40 pt stamp overlaps the label text; use `--width` or manual coordinates if that matters.
+- Where the label sits only ~15 pt above the underscore line the stamp box shrinks to 24 pt (signature scaled down, aspect kept); use manual coordinates for a larger one.
 - `--all` signs one spot per page, even when a page has several signers; narrow with `--match`.
 
 ## Development
