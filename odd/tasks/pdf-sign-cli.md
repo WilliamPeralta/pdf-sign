@@ -46,6 +46,7 @@ Mode: enabled (source: user global config "Strict TDD Mode: enabled"). Runner: `
 - T3 done. RED: 13 failed/5 passed in tests/test_sign.py (sign not implemented); GREEN: 40 passed. Render-based pixel checks (pdfplumber/pypdfium2) cover default, manual, rotated (/Rotate 90) and offset-mediabox pages. Commit: feat(sign).
 - T4 done. README with JSON contract, exit codes, licenses (verified from package metadata), limitations. Commit: docs.
 - Placement fix (coordinator decision): stamp straddles the line, clamped below the label (min 24pt). RED: test_stamp_straddles_line_without_covering_label failed; GREEN: 42 passed after updating placement-dependent expectations. Commit: fix(sign) place stamp across the line.
+- Free-space placement (replaces 25%/24pt rule): band around line bounded by nearest text above/below, cap 60pt, `--width` clamped (`clamped` flag). RED: 5 new tests failed (growth, stops before text below, clamped keys); GREEN: 50 passed. Commit: fix(sign) grow stamp into free space around the line.
 
 ## Next step
 Done locally; awaiting user decisions (see report).

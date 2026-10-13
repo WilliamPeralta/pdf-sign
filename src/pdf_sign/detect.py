@@ -7,7 +7,7 @@ PDF user space, so bboxes can be used directly by `sign`.
 from __future__ import annotations
 
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import pdfplumber
@@ -15,10 +15,10 @@ from pypdf import PdfReader
 
 from .errors import EXIT_INVALID_INPUT, EXIT_USAGE, PdfSignError
 from .geometry import visual_to_user_rect
+from .placement import band, text_boxes
 
 MIN_SCORE = 0.5
 BOX_HEIGHT = 40.0  # default stamp box height on a line
-MIN_BOX_HEIGHT = 24.0
 DEFAULT_WIDTH = 150.0  # default stamp box width when only an anchor is known
 
 _ANCHOR_PATTERNS = [
@@ -49,9 +49,12 @@ class Candidate:
     label: str
     score: float
     role: str = "unknown"  # employer | signer | unknown (hint derived from label)
+    # [x0, y, x1, y] of the underlying line in user space; internal, used by `sign` for fitting
+    line: list[float] | None = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
         d = asdict(self)
+        d.pop("line")
         d["bbox"] = [round(v, 2) for v in self.bbox]
         d["score"] = round(self.score, 3)
         return d
@@ -205,25 +208,6 @@ def _options(a: _Seg, runs: list[_Run]) -> list[tuple[float, str, _Run]]:
     return sorted(opts, key=lambda o: o[0])
 
 
-def _line_box(line_y: float, anchor: _Seg, rel: str) -> tuple[float, float]:
-    """Vertical extent (top-based frame) of a stamp straddling the line like a handwritten signature.
-
-    The ink crosses the line (25% of the height below it) and never covers the anchor label:
-    the box is clamped to the label edge, and kept at MIN_BOX_HEIGHT by growing away from the label.
-    """
-    top = line_y - 0.75 * BOX_HEIGHT
-    bottom = line_y + 0.25 * BOX_HEIGHT
-    if rel == "below":  # label above the line
-        top = max(top, anchor.bottom + 2)
-        if bottom - top < MIN_BOX_HEIGHT:
-            bottom = top + MIN_BOX_HEIGHT
-    elif rel == "above":  # label under the line
-        bottom = min(bottom, anchor.top - 2)
-        if bottom - top < MIN_BOX_HEIGHT:
-            top = bottom - MIN_BOX_HEIGHT
-    return top, bottom
-
-
 def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candidate]:
     hd = float(page.height)
     bb = page.bbox
@@ -233,6 +217,22 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
         vx0, vx1 = x0 - bb[0], x1 - bb[0]
         vy0, vy1 = hd - (top1 - bb[1]), hd - (top0 - bb[1])
         return visual_to_user_rect(rot, crop, [vx0, vy0, vx1, vy1])
+
+    boxes = text_boxes(page)
+
+    def line_candidate(r: _Run, label: str, score: float) -> Candidate:
+        vx0, vx1 = r.x0 - bb[0], r.x1 - bb[0]
+        vy = hd - (r.y - bb[1])
+        lo, hi = band(boxes, vx0, vx1, vy)
+        return Candidate(
+            pageno,
+            visual_to_user_rect(rot, crop, [vx0, lo, vx1, hi]),
+            "line",
+            label,
+            score,
+            role_of(label),
+            line=visual_to_user_rect(rot, crop, [vx0, vy, vx1, vy]),
+        )
 
     segs = _segments(page.chars)
     if not segs:
@@ -260,9 +260,7 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
         if hit:
             rel, r = hit
             score = (0.9 if short else 0.6) - (0.1 if rel == "above" else 0.0)
-            top_t, bot_t = _line_box(r.y, a, rel)
-            box = to_user(r.x0, top_t, r.x1, bot_t)
-            out.append(Candidate(pageno, box, "line", label, score, role_of(label)))
+            out.append(line_candidate(r, label, score))
         else:
             score = 0.6 if short else 0.4
             baseline = a.bottom
@@ -274,8 +272,7 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
 
     for r in runs:
         if not r.claimed and (r.owner is None or r.pure):
-            box = to_user(r.x0, r.y - 0.75 * BOX_HEIGHT, r.x1, r.y + 0.25 * BOX_HEIGHT)
-            out.append(Candidate(pageno, box, "line", "", 0.2))
+            out.append(line_candidate(r, "", 0.2))
     return out
 
 

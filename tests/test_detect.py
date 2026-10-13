@@ -28,8 +28,8 @@ def test_anchor_with_underscore_same_line(anchor_underscore_pdf):
     assert top.label == "Firma:"
     x0, y0, x1, y1 = top.bbox
     # underscores start right of "Firma:" (x > 72+30) and the box sits on the baseline (500)
-    assert 100 < x0 < 140 and 485 <= y0 <= 492  # straddles: ~10pt below the line
-    assert y1 - y0 == pytest.approx(40, abs=1)
+    assert 100 < x0 < 140 and 455 <= y0 <= 460  # free band: 40pt below the line
+    assert y1 - y0 == pytest.approx(60, abs=1)  # band capped at 60pt
     assert top.score >= 0.8
 
 
@@ -38,7 +38,7 @@ def test_anchor_with_drawn_line(anchor_drawn_line_pdf):
     assert top.source == "line"
     assert top.bbox[0] == pytest.approx(160, abs=1)
     assert top.bbox[2] == pytest.approx(360, abs=1)
-    assert top.bbox[1] == pytest.approx(488, abs=3)
+    assert top.bbox[1] == pytest.approx(458, abs=3)
 
 
 def test_anchor_without_line_places_right(anchor_only_pdf):
@@ -95,9 +95,10 @@ def test_real_layout_underscore_on_next_line(real_layout_pdf):
     assert emp.page == 1 and emp.source == "line" and emp.score >= 0.8
     # image sits just above the underscore line (baseline 285), starts at the run's x0
     assert emp.bbox[0] == pytest.approx(330, abs=2)
-    # label sits 15pt above the line: box is clamped under the label, min height 24, crosses the line
+    # label sits 15pt above the line: band tops out under the label, extends 40pt below the line
     assert emp.bbox[1] < 282.6 < emp.bbox[3]
-    assert emp.bbox[3] - emp.bbox[1] == pytest.approx(24, abs=1)
+    assert 45 <= emp.bbox[3] - emp.bbox[1] <= 60
+    assert emp.bbox[3] < 295.6 + 0.5
     assert labels["Firma del dipendente"].page == 2
     # the two columns resolve to distinct underscore runs
     assert labels["Firma del datore di lavoro"].bbox[0] == pytest.approx(72, abs=2)
@@ -130,16 +131,16 @@ def test_rotated_page_uses_user_space(rotated_pdf):
     assert top.label == "Firma:"
     # visual horizontal runs along user-space Y on a /Rotate 90 page
     assert (y1 - y0) > (x1 - x0)
-    # line at user x~300; box extends 10pt below it (user +x) and 30pt above (user -x)
-    assert x1 == pytest.approx(310, abs=8)
-    assert x1 - x0 == pytest.approx(40, abs=1)
+    # line at user x~300; box extends 40pt below it (user +x) and 20pt above (user -x)
+    assert x1 == pytest.approx(342, abs=8)
+    assert x1 - x0 == pytest.approx(60, abs=1)
     assert y0 > 100
 
 
 def test_offset_mediabox(offset_mediabox_pdf):
     top = cands(offset_mediabox_pdf)[0]
     # content origin offset by (0,0) in user space; box lives inside the shifted mediabox
-    assert top.bbox[1] == pytest.approx(488, abs=5)
+    assert top.bbox[1] == pytest.approx(458, abs=5)
     assert top.bbox[0] > 100
 
 

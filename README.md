@@ -43,7 +43,7 @@ Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are
 - `label`: the full anchor text line (underscores removed). `role`: hint from the label, `employer` (datore, legale rappresentante, timbro), `signer` (dipendente, accettazione, dichiarante, lavoratore) or `unknown`. It is only a hint: pass `--match`/`--exclude` to pick the right signer.
 - Anchors (IT/EN, case-insensitive, whole words only, so `firmatario`, `infirmare`, `designed` do not match): firma, firmato, signature, sign here, signed, il dichiarante, letto, confermato e sottoscritto, in fede, timbro e firma, firma del cliente, firma leggibile.
 - Line placement: underscore run (3+) or drawn horizontal line on the same line to the right of the anchor, just below it, or just above it. Underscore blanks inside prose (`Targa: ____`, `il dipendente ____ dichiara`) are never candidates.
-- The box straddles the line like a handwritten signature (25% of the height below it), starts at the line's left edge and spans the line length. It is 40 pt tall, but never covers the anchor label: when the label is above the line the box top is clamped 2 pt below the label bottom (label under the line: box bottom 2 pt above the label top), with a 24 pt minimum height.
+- `bbox` is the free vertical band around the line within the line's x-range: its top is 2 pt under the nearest text above the line, its bottom is 2 pt over the nearest text below (within 80 pt; otherwise 40 pt below the line), never lower than 45 pt below the line or the page edge, and at most 60 pt tall. `sign` fits the PNG (aspect kept) as large as possible in that band and the line length, left-aligned to the line start, crossing the line, and never intersecting text.
 
 ### `pdf-sign sign <pdf> --signature <png> [options]`
 
@@ -55,14 +55,14 @@ Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are
 | `--match RE` / `--exclude RE` | filter candidates by label (case-insensitive regex) |
 | `--all` | stamp the best spot on every page that has one |
 | `--page P --x X --y Y` | manual placement (bottom-left of the image, user space); all three required; no detection |
-| `--width W` | image width in points, aspect ratio kept (manual default 150) |
+| `--width W` | image width in points, aspect ratio kept (manual default 150). For detected line spots it is shrunk when text is in the way and the placement reports `"clamped": true`; manual coordinates are taken literally |
 
 Without `--width` the image is fitted inside the candidate box keeping the PNG aspect ratio. Output:
 
 ```json
 {"input": "in.pdf", "output": "in.signed.pdf", "signature": "sig.png",
  "placements": [{"page": 2, "stamp": [59.7, 693.06, 159.7, 733.06],
-                 "source": "line", "label": "Firma del dipendente", "score": 0.9}]}
+                 "source": "line", "label": "Firma del dipendente", "score": 0.9, "clamped": false}]}
 ```
 
 ### Agent recipe
@@ -78,7 +78,7 @@ pdf-sign sign doc.pdf --signature sig.png --page 1 --x 100 --y 120 --width 140
 
 - Scanned / image-only PDFs have no text layer: no anchors, `detect` exits 2. OCR is future work (use manual coordinates meanwhile).
 - Sideways text on a rotated page whose content is not upright when displayed is not analysed.
-- Where the label sits only ~15 pt above the underscore line the stamp box shrinks to 24 pt (signature scaled down, aspect kept); use manual coordinates for a larger one.
+- Obstacles are text chars only; table borders or images near the line are not avoided.
 - `--all` signs one spot per page, even when a page has several signers; narrow with `--match`.
 
 ## Development

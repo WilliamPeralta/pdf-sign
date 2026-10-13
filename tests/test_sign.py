@@ -61,7 +61,7 @@ def test_keeps_aspect_ratio_and_fits_box(anchor_underscore_pdf, signature_png):
     _, out = sign(anchor_underscore_pdf, signature_png)
     x0, y0, x1, y1 = out["placements"][0]["stamp"]
     assert (x1 - x0) / (y1 - y0) == pytest.approx(200 / 80, rel=0.01)
-    assert y1 - y0 <= 40.01
+    assert y1 - y0 <= 60.01
 
 
 def test_never_overwrites_without_force(anchor_underscore_pdf, signature_png, tmp_path):
@@ -167,7 +167,7 @@ def test_rotated_page_signature_is_upright(rotated_pdf, signature_png, tmp_path)
     # displayed position matches the anchor: user (300,100) -> visual (100, 295 from bottom)
     vx, vy = user_to_visual_point(90, [0, 0, 595.27, 841.89], 300, 100)
     assert x0 > vx
-    assert bottom == pytest.approx(595.27 - vy, abs=15)  # on the line, in displayed top-based frame
+    assert bottom == pytest.approx(595.27 - vy, abs=20)  # ink near the line (PNG ink is mid-image), displayed top-based frame
 
 
 def test_offset_mediabox_signature_inside_page(offset_mediabox_pdf, signature_png, tmp_path):
@@ -227,3 +227,87 @@ def test_stamp_above_label_layout_does_not_cover_label(tmp_path, signature_png):
     label = _word_box(p, "dichiarante")
     assert 841.89 - sy0 <= label["top"] + 0.01  # stamp bottom stays above the label top
     assert sy1 - sy0 >= 24 - 0.01
+
+
+# ---- free-space placement: grow into free space, never touch text, --width is clamped ----
+
+
+def _text_boxes(path, page=0):
+    with pdfplumber.open(path) as pdf:
+        pg = pdf.pages[page]
+        return [(c["x0"], c["top"], c["x1"], c["bottom"]) for c in pg.chars
+                if c["text"].strip() and c["text"] != "_"], pg.height
+
+
+def assert_no_text_overlap(path, stamp, page=0):
+    boxes, height = _text_boxes(path, page)
+    sx0, sy0, sx1, sy1 = stamp
+    s = (sx0, height - sy1, sx1, height - sy0)  # top-based
+    for b in boxes:
+        hit = s[0] < b[2] and b[0] < s[2] and s[1] < b[3] and b[1] < s[3]
+        assert not hit, f"stamp {s} intersects text {b}"
+
+
+@pytest.fixture
+def text_below_pdf(tmp_path):
+    """Underscore line with a name 20pt below it and prose above."""
+    from reportlab.pdfgen import canvas
+
+    p = tmp_path / "text_below.pdf"
+    c = canvas.Canvas(str(p))
+    c.setFont("Helvetica", 11)
+    c.drawString(72, 430, "Per accettazione, il dipendente")
+    c.drawString(72, 400, "Firma")
+    c.drawString(72, 385, "____________________")
+    c.drawString(72, 365, "Mario Rossi, matricola 123")
+    c.save()
+    return p
+
+
+def test_stamp_grows_into_free_space_below_line(real_layout_pdf, signature_png):
+    _, out = sign(real_layout_pdf, signature_png, "--match", "accettazione")
+    _, sy0, _, sy1 = out["placements"][0]["stamp"]
+    assert sy1 - sy0 > 40  # old rule capped at 24pt here
+    assert sy1 - sy0 <= 60.01
+    assert sy0 < 282.6 < sy1
+    assert out["placements"][0]["clamped"] is False
+
+
+def test_stamp_stops_before_text_below(text_below_pdf, signature_png):
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$")
+    st = out["placements"][0]["stamp"]
+    boxes, height = _text_boxes(text_below_pdf)
+    name_top = min(b[1] for b in boxes if b[1] > height - 385)  # text under the line
+    assert height - st[1] <= name_top + 0.01
+    assert st[1] < 385 - 2.4 < st[3]  # crosses the line
+    assert_no_text_overlap(text_below_pdf, st)
+
+
+@pytest.mark.parametrize("fixture,match", [
+    ("real_layout_pdf", "accettazione"),
+    ("real_layout_pdf", "datore"),
+    ("anchor_underscore_pdf", None),
+    ("text_below_pdf", "^Firma$"),
+])
+def test_stamp_never_intersects_text(request, signature_png, fixture, match):
+    pdf = request.getfixturevalue(fixture)
+    extra = ["--match", match] if match else []
+    _, out = sign(pdf, signature_png, *extra)
+    assert_no_text_overlap(pdf, out["placements"][0]["stamp"])
+
+
+def test_width_is_clamped_to_free_space(text_below_pdf, signature_png):
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--width", "400")
+    pl = out["placements"][0]
+    x0, y0, x1, y1 = pl["stamp"]
+    assert pl["clamped"] is True
+    assert x1 - x0 < 400
+    assert (x1 - x0) / (y1 - y0) == pytest.approx(2.5, rel=0.01)
+    assert_no_text_overlap(text_below_pdf, pl["stamp"])
+
+
+def test_width_not_clamped_when_it_fits(text_below_pdf, signature_png):
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--width", "40")
+    pl = out["placements"][0]
+    assert pl["clamped"] is False
+    assert pl["stamp"][2] - pl["stamp"][0] == pytest.approx(40, abs=0.1)

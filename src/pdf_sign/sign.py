@@ -6,6 +6,7 @@ import io
 from dataclasses import dataclass
 from pathlib import Path
 
+import pdfplumber
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.utils import ImageReader
@@ -13,6 +14,7 @@ from reportlab.pdfgen import canvas
 
 from .detect import MIN_SCORE, Candidate, check_pdf_path, detect_candidates, filter_candidates
 from .errors import EXIT_INVALID_INPUT, EXIT_NO_CANDIDATE, EXIT_USAGE, PdfSignError
+from .placement import fit_stamp, text_boxes
 from .geometry import user_to_visual_point, user_to_visual_rect, visual_to_user_point, visual_to_user_rect
 
 DEFAULT_WIDTH = 150.0
@@ -26,6 +28,7 @@ class Placement:
     label: str
     score: float | None
     _visual: list[float]  # stamp rect in the displayed frame
+    clamped: bool = False  # --width was reduced to stay clear of text
 
     def to_dict(self) -> dict:
         return {
@@ -34,6 +37,7 @@ class Placement:
             "source": self.source,
             "label": self.label,
             "score": None if self.score is None else round(self.score, 3),
+            "clamped": self.clamped,
         }
 
 
@@ -65,8 +69,12 @@ def _fit(box_w: float, box_h: float, aspect: float, width: float | None) -> tupl
 
 
 def plan_from_candidate(c: Candidate, geo: tuple[int, list[float]], aspect: float,
-                        width: float | None) -> Placement:
+                        width: float | None, boxes: list[list[float]] | None = None) -> Placement:
     rot, crop = geo
+    if c.line is not None and boxes is not None:
+        lx0, ly, lx1, _ = user_to_visual_rect(rot, crop, c.line)
+        vis, clamped = fit_stamp(boxes, lx0, lx1, ly, aspect, width)
+        return Placement(c.page, _to_user(rot, crop, vis), c.source, c.label, c.score, vis, clamped)
     vx0, vy0, vx1, vy1 = user_to_visual_rect(rot, crop, c.bbox)
     w, h = _fit(vx1 - vx0, vy1 - vy0, aspect, width)
     vis = [vx0, vy0, vx0 + w, vy0 + h]
@@ -167,8 +175,12 @@ def sign_pdf(
         if not chosen:
             raise PdfSignError("no_candidate", "No signature spot found; use --page/--x/--y "
                                "or relax --match/--exclude", EXIT_NO_CANDIDATE)
-        for c in chosen:
-            plans.append(plan_from_candidate(c, page_geometry(reader, c.page - 1), aspect, width))
+        with pdfplumber.open(src) as plumb:
+            for c in chosen:
+                boxes = text_boxes(plumb.pages[c.page - 1])
+                plans.append(
+                    plan_from_candidate(c, page_geometry(reader, c.page - 1), aspect, width, boxes)
+                )
 
     writer = PdfWriter(clone_from=reader)
     for pl in plans:
