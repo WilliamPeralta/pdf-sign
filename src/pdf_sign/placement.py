@@ -48,15 +48,9 @@ def _fits(boxes: list[Rect], x0: float, w: float, line_y: float, aspect: float) 
     return w / aspect <= (hi - lo) + 1e-6
 
 
-def fit_stamp(
-    boxes: list[Rect], x0: float, x1: float, line_y: float, aspect: float, width: float | None = None
-) -> tuple[Rect, bool]:
-    """Largest stamp (aspect w/h kept) left-aligned at x0, crossing line_y, clear of all text.
-
-    Without `width` it is bounded by the line length; with `width` that is the wish and the result
-    shrinks if text is in the way (second value True when it did).
-    """
-    wish = width if width is not None else (x1 - x0)
+def _free_width(boxes: list[Rect], x0: float, x1: float, line_y: float, aspect: float) -> float:
+    """Widest stamp (aspect kept) that fits the free band around the line without touching text."""
+    wish = x1 - x0
     valid: list[float] = []
     w = wish
     for _ in range(8):  # fixed point: width implied by the band over the current x-range
@@ -71,8 +65,82 @@ def fit_stamp(
     while not _fits(boxes, x0, w, line_y, aspect) and w > 1:  # conservative shrink fallback
         w *= 0.95
     valid.append(w)
-    w = max(valid)
+    return max(valid)
+
+
+def _overlap(r: Rect, b: Rect) -> float:
+    dx = min(r[2], b[2]) - max(r[0], b[0])
+    dy = min(r[3], b[3]) - max(r[1], b[1])
+    return dx * dy if dx > 0 and dy > 0 else 0.0
+
+
+def _in(b: Rect, label: Rect) -> bool:
+    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    return label[0] <= cx <= label[2] and label[1] <= cy <= label[3]
+
+
+def fit_stamp(
+    boxes: list[Rect],
+    x0: float,
+    x1: float,
+    line_y: float,
+    aspect: float,
+    width: float | None = None,
+    min_width: float = 0.0,
+    label: Rect | None = None,
+    floor: float = 0.0,
+) -> tuple[Rect, dict]:
+    """Stamp (aspect w/h kept) left-aligned near x0 that crosses line_y with the least text overlap.
+
+    Size: explicit `width` wins (capped at the line length -> `clamped`); otherwise the largest size
+    fitting the free band, enlarged to `min_width` (capped at the line length) when smaller.
+    Position: searched so 15-60% of the height is below the line; the score is the intersection
+    area with text, 3x for the anchor label; ties prefer leftmost, then ~25% below the line.
+    """
+    line_len = x1 - x0
+    clamped = applied = False
+    if width is not None:
+        w = min(width, line_len)
+        clamped = width > line_len + 0.01
+    else:
+        w0 = _free_width(boxes, x0, x1, line_y, aspect)
+        w = w0
+        if w0 < min_width:
+            w = min(min_width, line_len)
+            applied = w > w0 + 0.01
     h = w / aspect
+    near = [b for b in boxes if b[2] > x0 and b[0] < x1 and b[3] > line_y - 2 * h and b[1] < line_y + 2 * h]
+
+    def score(r: Rect) -> float:
+        return sum(_overlap(r, b) * (3.0 if label and _in(b, label) else 1.0) for b in near)
+
+    bottoms = []
+    k = 0.0
+    while line_y - 0.6 * h + k <= line_y - 0.15 * h + 1e-9:
+        bottoms.append(line_y - 0.6 * h + k)
+        k += 2.0
     lo, hi = band(boxes, x0, x0 + w, line_y)
-    b = min(max(line_y - 0.25 * h, lo), hi - h)  # straddle the line: ~25% below it
-    return [x0, b, x0 + w, b + h], (width is not None and w < width - 0.01)
+    b0 = min(max(line_y - 0.25 * h, lo), hi - h)  # free-band position, when it exists
+    if b0 < line_y < b0 + h:
+        bottoms.append(b0)
+    xs = []
+    k = 0.0
+    while x0 + k < x1 - w:
+        xs.append(x0 + k)
+        k += 4.0
+    xs.append(max(x0, x1 - w))
+    best = None
+    for bottom in bottoms:
+        if bottom < floor:
+            continue
+        frac = (line_y - bottom) / h
+        for x in xs:
+            r = [x, bottom, x + w, bottom + h]
+            key = (round(score(r), 2), round(x, 2), abs(frac - 0.25))
+            if best is None or key < best[0]:
+                best = (key, r)
+    if best is None:  # page floor excludes every position: fall back to the free-band one
+        best = ((0, 0, 0), [x0, b0, x0 + w, b0 + h])
+    rect = best[1]
+    flags = {"clamped": clamped, "min_width_applied": applied, "overlaps_text": score(rect) > 0.01}
+    return rect, flags

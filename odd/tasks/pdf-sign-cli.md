@@ -47,6 +47,7 @@ Mode: enabled (source: user global config "Strict TDD Mode: enabled"). Runner: `
 - T4 done. README with JSON contract, exit codes, licenses (verified from package metadata), limitations. Commit: docs.
 - Placement fix (coordinator decision): stamp straddles the line, clamped below the label (min 24pt). RED: test_stamp_straddles_line_without_covering_label failed; GREEN: 42 passed after updating placement-dependent expectations. Commit: fix(sign) place stamp across the line.
 - Free-space placement (replaces 25%/24pt rule): band around line bounded by nearest text above/below, cap 60pt, `--width` clamped (`clamped` flag). RED: 5 new tests failed (growth, stops before text below, clamped keys); GREEN: 50 passed. Commit: fix(sign) grow stamp into free space around the line.
+- Min legible size: `--min-width` (default 100) + overlap-minimizing position search (label 3x), flags `min_width_applied`/`overlaps_text`; `--width` capped at line length (`clamped`). RED: 12 failed; GREEN: 56 passed. Commit: feat(sign) enforce minimum legible signature size.
 
 ## Next step
 Done locally; awaiting user decisions (see report).

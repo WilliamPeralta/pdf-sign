@@ -274,7 +274,7 @@ def test_stamp_grows_into_free_space_below_line(real_layout_pdf, signature_png):
 
 
 def test_stamp_stops_before_text_below(text_below_pdf, signature_png):
-    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$")
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--min-width", "0")
     st = out["placements"][0]["stamp"]
     boxes, height = _text_boxes(text_below_pdf)
     name_top = min(b[1] for b in boxes if b[1] > height - 385)  # text under the line
@@ -291,23 +291,94 @@ def test_stamp_stops_before_text_below(text_below_pdf, signature_png):
 ])
 def test_stamp_never_intersects_text(request, signature_png, fixture, match):
     pdf = request.getfixturevalue(fixture)
-    extra = ["--match", match] if match else []
+    extra = (["--match", match] if match else []) + ["--min-width", "0"]
     _, out = sign(pdf, signature_png, *extra)
     assert_no_text_overlap(pdf, out["placements"][0]["stamp"])
 
 
-def test_width_is_clamped_to_free_space(text_below_pdf, signature_png):
+def test_width_is_clamped_to_line_length(text_below_pdf, signature_png):
     _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--width", "400")
     pl = out["placements"][0]
     x0, y0, x1, y1 = pl["stamp"]
-    assert pl["clamped"] is True
+    assert pl["clamped"] is True  # wider than the line
     assert x1 - x0 < 400
     assert (x1 - x0) / (y1 - y0) == pytest.approx(2.5, rel=0.01)
-    assert_no_text_overlap(text_below_pdf, pl["stamp"])
 
 
 def test_width_not_clamped_when_it_fits(text_below_pdf, signature_png):
     _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--width", "40")
     pl = out["placements"][0]
-    assert pl["clamped"] is False
+    assert pl["clamped"] is False and pl["min_width_applied"] is False
     assert pl["stamp"][2] - pl["stamp"][0] == pytest.approx(40, abs=0.1)
+
+
+# ---- minimum legible size + overlap-minimizing search ----
+
+
+@pytest.fixture
+def crowded_left_pdf(tmp_path):
+    """Long line; text hugging it on the left (above and below), free space to the right."""
+    from reportlab.pdfgen import canvas
+
+    p = tmp_path / "crowded_left.pdf"
+    c = canvas.Canvas(str(p))
+    c.setFont("Helvetica", 11)
+    c.drawString(72, 400, "Firma")
+    c.drawString(72, 385, "________________________________________")
+    c.drawString(72, 375, "Mario Rossi")
+    c.save()
+    return p
+
+
+def test_min_width_enforced_and_flagged(text_below_pdf, signature_png):
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$")
+    pl = out["placements"][0]
+    x0, y0, x1, y1 = pl["stamp"]
+    assert x1 - x0 >= 100 - 0.01
+    assert pl["min_width_applied"] is True
+    assert pl["overlaps_text"] is True  # a 40pt stamp cannot fit the 19pt band
+    assert y0 < 385 - 2.4 < y1  # still crosses the line
+    assert 0.15 * (y1 - y0) - 0.5 <= (385 - 2.4) - y0 <= 0.6 * (y1 - y0) + 0.5
+
+
+def test_min_width_zero_disables(text_below_pdf, signature_png):
+    _, out = sign(text_below_pdf, signature_png, "--match", "^Firma$", "--min-width", "0")
+    pl = out["placements"][0]
+    assert pl["min_width_applied"] is False and pl["overlaps_text"] is False
+    assert pl["stamp"][2] - pl["stamp"][0] < 100
+
+
+def test_min_width_capped_by_line_length(real_layout_pdf, signature_png):
+    _, out = sign(real_layout_pdf, signature_png, "--match", "accettazione", "--min-width", "300")
+    x0, _, x1, _ = out["placements"][0]["stamp"]
+    assert x1 - x0 <= 125  # the underscore run is ~110pt long
+
+
+def test_search_moves_stamp_away_from_text(crowded_left_pdf, signature_png):
+    _, out = sign(crowded_left_pdf, signature_png, "--match", "^Firma$")
+    pl = out["placements"][0]
+    x0, _, x1, _ = pl["stamp"]
+    assert x1 - x0 >= 100 - 0.01
+    assert pl["overlaps_text"] is False
+    assert x0 > 72 + 55  # slid right of "Mario Rossi" / "Firma"
+    assert_no_text_overlap(crowded_left_pdf, pl["stamp"])
+
+
+def test_explicit_width_wins_over_min_width(crowded_left_pdf, signature_png):
+    _, out = sign(crowded_left_pdf, signature_png, "--match", "^Firma$", "--width", "60")
+    pl = out["placements"][0]
+    assert pl["stamp"][2] - pl["stamp"][0] == pytest.approx(60, abs=0.1)
+    assert pl["min_width_applied"] is False and pl["clamped"] is False
+
+
+def test_label_overlap_is_penalized_3x():
+    from pdf_sign.placement import fit_stamp
+
+    label = [0.0, 120.0, 100.0, 130.0]
+    below = [0.0, 70.0, 100.0, 85.0]
+    rect, flags = fit_stamp([label, below], 0.0, 100.0, 100.0, 2.5, min_width=100.0, label=label)
+    assert rect[3] <= 120.01  # keeps clear of the label even though the other text is hit
+    assert flags["overlaps_text"] is True
+    # without the label weighting the tie-break (~25% below) would have covered the label
+    rect2, _ = fit_stamp([label, below], 0.0, 100.0, 100.0, 2.5, min_width=100.0, label=None)
+    assert rect2[3] > 120.01

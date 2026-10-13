@@ -51,10 +51,12 @@ class Candidate:
     role: str = "unknown"  # employer | signer | unknown (hint derived from label)
     # [x0, y, x1, y] of the underlying line in user space; internal, used by `sign` for fitting
     line: list[float] | None = field(default=None, repr=False)
+    anchor: list[float] | None = field(default=None, repr=False)  # label text rect, user space
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d.pop("line")
+        d.pop("anchor")
         d["bbox"] = [round(v, 2) for v in self.bbox]
         d["score"] = round(self.score, 3)
         return d
@@ -220,7 +222,7 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
 
     boxes = text_boxes(page)
 
-    def line_candidate(r: _Run, label: str, score: float) -> Candidate:
+    def line_candidate(r: _Run, label: str, score: float, a: _Seg | None = None) -> Candidate:
         vx0, vx1 = r.x0 - bb[0], r.x1 - bb[0]
         vy = hd - (r.y - bb[1])
         lo, hi = band(boxes, vx0, vx1, vy)
@@ -232,6 +234,9 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
             score,
             role_of(label),
             line=visual_to_user_rect(rot, crop, [vx0, vy, vx1, vy]),
+            anchor=None if a is None else visual_to_user_rect(
+                rot, crop, [a.x0 - bb[0], hd - (a.bottom - bb[1]), a.x1 - bb[0], hd - (a.top - bb[1])]
+            ),
         )
 
     segs = _segments(page.chars)
@@ -260,7 +265,7 @@ def _detect_page(page, pageno: int, rot: int, crop: list[float]) -> list[Candida
         if hit:
             rel, r = hit
             score = (0.9 if short else 0.6) - (0.1 if rel == "above" else 0.0)
-            out.append(line_candidate(r, label, score))
+            out.append(line_candidate(r, label, score, a))
         else:
             score = 0.6 if short else 0.4
             baseline = a.bottom

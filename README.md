@@ -43,7 +43,7 @@ Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are
 - `label`: the full anchor text line (underscores removed). `role`: hint from the label, `employer` (datore, legale rappresentante, timbro), `signer` (dipendente, accettazione, dichiarante, lavoratore) or `unknown`. It is only a hint: pass `--match`/`--exclude` to pick the right signer.
 - Anchors (IT/EN, case-insensitive, whole words only, so `firmatario`, `infirmare`, `designed` do not match): firma, firmato, signature, sign here, signed, il dichiarante, letto, confermato e sottoscritto, in fede, timbro e firma, firma del cliente, firma leggibile.
 - Line placement: underscore run (3+) or drawn horizontal line on the same line to the right of the anchor, just below it, or just above it. Underscore blanks inside prose (`Targa: ____`, `il dipendente ____ dichiara`) are never candidates.
-- `bbox` is the free vertical band around the line within the line's x-range: its top is 2 pt under the nearest text above the line, its bottom is 2 pt over the nearest text below (within 80 pt; otherwise 40 pt below the line), never lower than 45 pt below the line or the page edge, and at most 60 pt tall. `sign` fits the PNG (aspect kept) as large as possible in that band and the line length, left-aligned to the line start, crossing the line, and never intersecting text.
+- `bbox` is the free vertical band around the line within the line's x-range: its top is 2 pt under the nearest text above the line, its bottom is 2 pt over the nearest text below (within 80 pt; otherwise 40 pt below the line), never lower than 45 pt below the line or the page edge, and at most 60 pt tall. `sign` fits the PNG (aspect kept) as large as possible in that band and the line length, then enlarges it to `--min-width` if needed. It searches positions where 15-60% of the stamp is below the line (2 pt steps) and from the line start to the line end (4 pt steps), minimizing the overlap area with text (the anchor label counts 3x); ties prefer leftmost, then about 25% below the line. When enlarged stamps cannot avoid text, `"overlaps_text": true` is reported; with `--min-width 0` and enough free space it is `false`.
 
 ### `pdf-sign sign <pdf> --signature <png> [options]`
 
@@ -55,14 +55,16 @@ Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are
 | `--match RE` / `--exclude RE` | filter candidates by label (case-insensitive regex) |
 | `--all` | stamp the best spot on every page that has one |
 | `--page P --x X --y Y` | manual placement (bottom-left of the image, user space); all three required; no detection |
-| `--width W` | image width in points, aspect ratio kept (manual default 150). For detected line spots it is shrunk when text is in the way and the placement reports `"clamped": true`; manual coordinates are taken literally |
+| `--width W` | image width in points, aspect ratio kept (manual default 150). Wins over `--min-width`. For detected line spots it is capped at the line length (`"clamped": true`); manual coordinates are taken literally |
+| `--min-width W` | minimum legible width for detected line spots, default 100 pt, `0` disables. A smaller fitted stamp is enlarged to it (capped at the line length) and `"min_width_applied": true` is reported |
 
 Without `--width` the image is fitted inside the candidate box keeping the PNG aspect ratio. Output:
 
 ```json
 {"input": "in.pdf", "output": "in.signed.pdf", "signature": "sig.png",
  "placements": [{"page": 2, "stamp": [59.7, 693.06, 159.7, 733.06],
-                 "source": "line", "label": "Firma del dipendente", "score": 0.9, "clamped": false}]}
+                 "source": "line", "label": "Firma del dipendente", "score": 0.9, "clamped": false, "min_width_applied": false,
+                 "overlaps_text": false}]}
 ```
 
 ### Agent recipe

@@ -18,6 +18,7 @@ from .placement import fit_stamp, text_boxes
 from .geometry import user_to_visual_point, user_to_visual_rect, visual_to_user_point, visual_to_user_rect
 
 DEFAULT_WIDTH = 150.0
+DEFAULT_MIN_WIDTH = 100.0
 
 
 @dataclass
@@ -28,7 +29,9 @@ class Placement:
     label: str
     score: float | None
     _visual: list[float]  # stamp rect in the displayed frame
-    clamped: bool = False  # --width was reduced to stay clear of text
+    clamped: bool = False  # --width exceeded the line length and was capped
+    min_width_applied: bool = False  # stamp enlarged to the minimum legible width
+    overlaps_text: bool = False  # the stamp still covers some text
 
     def to_dict(self) -> dict:
         return {
@@ -38,6 +41,8 @@ class Placement:
             "label": self.label,
             "score": None if self.score is None else round(self.score, 3),
             "clamped": self.clamped,
+            "min_width_applied": self.min_width_applied,
+            "overlaps_text": self.overlaps_text,
         }
 
 
@@ -69,12 +74,15 @@ def _fit(box_w: float, box_h: float, aspect: float, width: float | None) -> tupl
 
 
 def plan_from_candidate(c: Candidate, geo: tuple[int, list[float]], aspect: float,
-                        width: float | None, boxes: list[list[float]] | None = None) -> Placement:
+                        width: float | None, boxes: list[list[float]] | None = None,
+                        min_width: float = 0.0) -> Placement:
     rot, crop = geo
     if c.line is not None and boxes is not None:
         lx0, ly, lx1, _ = user_to_visual_rect(rot, crop, c.line)
-        vis, clamped = fit_stamp(boxes, lx0, lx1, ly, aspect, width)
-        return Placement(c.page, _to_user(rot, crop, vis), c.source, c.label, c.score, vis, clamped)
+        label = user_to_visual_rect(rot, crop, c.anchor) if c.anchor else None
+        vis, fl = fit_stamp(boxes, lx0, lx1, ly, aspect, width, min_width, label)
+        return Placement(c.page, _to_user(rot, crop, vis), c.source, c.label, c.score, vis,
+                         fl["clamped"], fl["min_width_applied"], fl["overlaps_text"])
     vx0, vy0, vx1, vy1 = user_to_visual_rect(rot, crop, c.bbox)
     w, h = _fit(vx1 - vx0, vy1 - vy0, aspect, width)
     vis = [vx0, vy0, vx0 + w, vy0 + h]
@@ -139,6 +147,7 @@ def sign_pdf(
     match: str | None = None,
     exclude: str | None = None,
     force: bool = False,
+    min_width: float = DEFAULT_MIN_WIDTH,
 ) -> dict:
     src = check_pdf_path(pdf)
     manual = [v is not None for v in (page, x, y)]
@@ -179,7 +188,7 @@ def sign_pdf(
             for c in chosen:
                 boxes = text_boxes(plumb.pages[c.page - 1])
                 plans.append(
-                    plan_from_candidate(c, page_geometry(reader, c.page - 1), aspect, width, boxes)
+                    plan_from_candidate(c, page_geometry(reader, c.page - 1), aspect, width, boxes, min_width)
                 )
 
     writer = PdfWriter(clone_from=reader)

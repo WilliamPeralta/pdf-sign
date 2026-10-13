@@ -47,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--page", type=int, help="Manual placement: 1-based page.")
     s.add_argument("--x", type=float, help="Manual placement: left edge, PDF points (user space).")
     s.add_argument("--y", type=float, help="Manual placement: bottom edge, PDF points (user space).")
+    s.add_argument("--min-width", type=float, default=100.0,
+                   help="Minimum legible width in points for detected line spots (0 disables).")
     s.add_argument("--width", type=float, help="Signature width in points (aspect ratio kept).")
     return parser
 
@@ -66,7 +68,7 @@ def _run(args: argparse.Namespace) -> int:
             sign_pdf(
                 args.pdf, args.signature, args.output, candidate=args.candidate, page=args.page,
                 x=args.x, y=args.y, width=args.width, all_pages=args.all, match=args.match,
-                exclude=args.exclude, force=args.force,
+                exclude=args.exclude, force=args.force, min_width=args.min_width,
             )
         )
         return EXIT_OK
