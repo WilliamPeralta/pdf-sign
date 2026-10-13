@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
+import warnings
 
 from . import __version__
-from .detect import detect_candidates
+from .detect import detect_candidates, filter_candidates
 from .errors import EXIT_NO_CANDIDATE, EXIT_OK, EXIT_USAGE, PdfSignError
 
 
@@ -29,6 +31,8 @@ def build_parser() -> argparse.ArgumentParser:
     d = sub.add_parser("detect", help="List ranked signature candidates as JSON.")
     d.add_argument("pdf")
     d.add_argument("--all", action="store_true", help="Include low-score candidates.")
+    d.add_argument("--match", help="Keep candidates whose label matches this regex (case-insens.).")
+    d.add_argument("--exclude", help="Drop candidates whose label matches this regex.")
 
     s = sub.add_parser("sign", help="Stamp a PNG signature onto a PDF.")
     s.add_argument("pdf")
@@ -43,7 +47,8 @@ def _emit(obj: dict) -> None:
 
 def _run(args: argparse.Namespace) -> int:
     if args.command == "detect":
-        pages, cands = detect_candidates(args.pdf)
+        pages, cands = detect_candidates(args.pdf, include_low=args.all)
+        cands = filter_candidates(cands, args.match, args.exclude)
         _emit({"file": args.pdf, "pages": pages, "candidates": [c.to_dict() for c in cands]})
         return EXIT_OK if cands else EXIT_NO_CANDIDATE
     if args.command == "sign":
@@ -51,7 +56,15 @@ def _run(args: argparse.Namespace) -> int:
     raise PdfSignError("usage", f"Unknown command {args.command}", EXIT_USAGE)
 
 
+def _quiet_libraries() -> None:
+    # Library chatter (e.g. pypdf "Ignoring wrong pointing object") must never reach stdout.
+    for name in ("pypdf", "pdfminer", "pdfplumber"):
+        logging.getLogger(name).setLevel(logging.ERROR)
+    warnings.simplefilter("ignore")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _quiet_libraries()
     try:
         return _run(build_parser().parse_args(argv))
     except PdfSignError as exc:

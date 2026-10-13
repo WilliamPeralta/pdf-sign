@@ -76,7 +76,7 @@ def conferma_pdf(tmp_path):
     c = canvas.Canvas(str(path), pagesize=A4)
     c.setFont("Helvetica", 12)
     c.drawString(72, 700, "Si conferma la ricezione. Confermato e firmatario non rilevanti.")
-    c.drawString(72, 650, "Nessuna firma richiesta qui? No: solo testo.")
+    c.drawString(72, 650, "Infirmare la tesi, designed and assigned to the team.")
     c.save()
     return path
 
@@ -152,11 +152,15 @@ def acroform_sig_pdf(tmp_path):
 
 @pytest.fixture
 def rotated_pdf(tmp_path):
-    """Page with /Rotate 90 containing an anchor + underscore line."""
+    """/Rotate 90 page whose content is drawn rotated so it reads upright when displayed.
+
+    Rotated-frame point (a, b) is user-space (-b, a); text at (100, -300) starts at user (300, 100).
+    """
     base = io.BytesIO()
     c = canvas.Canvas(base, pagesize=A4)
     c.setFont("Helvetica", 12)
-    c.drawString(72, ANCHOR_LINE_Y, "Firma: ____________________")
+    c.rotate(90)
+    c.drawString(100, -300, "Firma: ____________________")
     c.save()
     base.seek(0)
     writer = PdfWriter(clone_from=PdfReader(base))
@@ -186,4 +190,40 @@ def offset_mediabox_pdf(tmp_path):
     path = tmp_path / "offset.pdf"
     with open(path, "wb") as f:
         writer.write(f)
+    return path
+
+
+@pytest.fixture
+def real_layout_pdf(tmp_path):
+    """Modeled on real HR forms: anchors with the underscore run on the NEXT line,
+    two signers side by side, prose blanks, and a second page."""
+    path = tmp_path / "real_layout.pdf"
+    c = canvas.Canvas(str(path), pagesize=A4)
+    c.setFont("Helvetica", 11)
+    c.drawString(72, 780, "Targa: ________")
+    c.drawString(72, 750, "Il dipendente ______________ dichiara di aver preso visione.")
+    c.drawString(72, 300, "Firma del datore di lavoro")
+    c.drawString(72, 285, "____________________")
+    c.drawString(330, 300, "Firma per accettazione")
+    c.drawString(330, 285, "____________________")
+    c.showPage()
+    c.setFont("Helvetica", 11)
+    c.drawString(72, 200, "Timbro e firma del legale rappresentante")
+    c.drawString(72, 185, "______________________")
+    c.drawString(330, 200, "Firma del dipendente")
+    c.drawString(330, 185, "______________________")
+    c.save()
+    return path
+
+
+@pytest.fixture
+def scanned_like_pdf(tmp_path):
+    """Image-only page: no text layer."""
+    from reportlab.lib.utils import ImageReader
+
+    img = Image.new("RGB", (100, 100), "white")
+    path = tmp_path / "scanned.pdf"
+    c = canvas.Canvas(str(path), pagesize=A4)
+    c.drawImage(ImageReader(img), 50, 50, 400, 400)
+    c.save()
     return path
