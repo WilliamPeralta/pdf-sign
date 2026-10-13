@@ -4,11 +4,42 @@ Small, agent-friendly CLI that finds where a PDF should be signed and stamps a P
 
 > Visual signature only. This is an image on the page, **not** a cryptographic or qualified digital signature (PAdES/CAdES).
 
-## Install
+## Quick start
 
 ```sh
+# 1. Install the CLI globally (needs uv: https://docs.astral.sh/uv/)
+uv tool install git+https://github.com/WilliamPeralta/pdf-sign
+
+# 2. See where the document wants a signature
+pdf-sign detect contract.pdf
+
+# 3. Sign it automatically (writes contract.signed.pdf, the original is untouched)
+pdf-sign sign contract.pdf --signature my-signature.png
+
+# Only sign your own spot when the document has several (e.g. employee vs employer)
+pdf-sign sign contract.pdf --signature my-signature.png --match 'accettazione|dipendente'
+
+# Place it yourself: page 1, 52pt from the left, 250pt from the bottom, 80pt wide
+pdf-sign sign contract.pdf --signature my-signature.png --page 1 --x 52 --y 250 --width 80
+
+# Sign a whole folder
+for f in *.pdf; do pdf-sign sign "$f" --signature my-signature.png -o "signed/${f%.pdf}.signed.pdf"; done
+```
+
+Tips:
+
+- Use a PNG with a **transparent background** so only the ink is stamped.
+- Signature too small or too big? Pass `--width` (points; 72pt = 1 inch).
+- Coordinates are PDF points from the **bottom-left** corner of the page.
+- Update: `uv tool upgrade pdf-sign`. Uninstall: `uv tool uninstall pdf-sign`.
+
+## Install (development)
+
+```sh
+git clone https://github.com/WilliamPeralta/pdf-sign && cd pdf-sign
 uv sync
 uv run pdf-sign --help
+uv run pytest -q
 ```
 
 Python >= 3.11. Dependencies (all permissive; AGPL libraries such as PyMuPDF are deliberately avoided; licenses checked from installed package metadata):

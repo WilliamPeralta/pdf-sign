@@ -2,6 +2,7 @@
 name = "pdf-sign"
 version = "0.1.0"
 description = "Detect signature spots in PDFs and stamp a PNG signature image there (visual signature only)."
+license = "MIT"
 authors = [
     { name = "william", email = "william.peralta18@gmail.com" }
 ]
