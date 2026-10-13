@@ -1,0 +1,47 @@
+# Feature: pdf-sign CLI
+
+## Objective
+A small, agent-friendly CLI that detects where a PDF should be signed and stamps a PNG signature image there.
+
+## Problem / Why
+PDFs arrive frequently with a request to sign them. Signing manually is slow. An AI agent should be able to call a deterministic CLI with JSON output to detect the spot and apply the signature.
+
+## Scope
+- `detect`: find signature placement candidates, ranked, JSON output.
+- `sign`: stamp a PNG (with alpha) on the best candidate or explicit coordinates; write a new PDF, never overwrite the input.
+- Visual signature only. NOT a cryptographic/qualified digital signature (PAdES/CAdES).
+
+## Constraints
+- Permissively licensed dependencies only (no AGPL): pdfplumber (MIT), pypdf (BSD-3), reportlab (BSD), Pillow (MIT-CMU).
+- Python >= 3.11, managed with `uv`. Entry point `pdf-sign`.
+- Agent-friendly: no prompts, stable JSON on stdout, errors as JSON on stderr, non-zero exit codes.
+
+## Detection strategy (ordered by confidence)
+1. AcroForm signature fields (`/FT /Sig`) -> exact rect.
+2. Text anchors (IT/EN): "Firma", "Signature", "Signed", "Il dichiarante", "Letto, confermato e sottoscritto", "In fede", etc.
+3. Underscore lines / drawn horizontal lines near anchors -> placement on the line.
+4. Fallback: none found -> empty candidates, exit code 2.
+
+## Delivery strategy
+ask-on-risk. Forecast ~600 authored lines (incl. tests) -> slicing question deferred: local-only project, no remote yet.
+
+## TDD
+Mode: enabled (source: user global config "Strict TDD Mode: enabled"). Runner: `uv run pytest`.
+
+## Tasks
+- [x] T1 Scaffold: pyproject (uv), package `pdf_sign`, CLI skeleton (`detect`, `sign`), pytest + test PDF fixtures generated with reportlab. Route: delegated (writer trigger: 2+ non-trivial files).
+- [ ] T2 Detection: AcroForm sig fields + text anchors + underscore/line heuristics, scoring, JSON output. Route: delegated.
+- [ ] T3 Signing: PNG overlay via reportlab + pypdf merge, auto (best candidate) and manual coordinates, size/aspect handling. Route: delegated.
+- [ ] T4 Agent docs: README with JSON contract, exit codes, examples for agents. Route: delegated.
+
+## Acceptance criteria
+- `pdf-sign detect in.pdf` prints JSON candidates with page, bbox, source, score.
+- `pdf-sign sign in.pdf --signature sig.png [-o out.pdf]` produces a signed PDF; image visible at detected spot.
+- `--page/--x/--y/--width` override detection.
+- Tests cover form field, text anchor, underscore line, no-candidate cases.
+
+## Progress / Evidence
+- T1 done. RED: 4/4 cli tests failed (no module), then 2 more RED for sign subcommand; GREEN: 5 passed (`uv run pytest -q`). Commit: see git log (chore: scaffold pdf-sign cli).
+
+## Next step
+T2.

@@ -1,0 +1,29 @@
+[project]
+name = "pdf-sign"
+version = "0.1.0"
+description = "Detect signature spots in PDFs and stamp a PNG signature image there (visual signature only)."
+authors = [
+    { name = "william", email = "william.peralta18@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pdfplumber>=0.11.10",
+    "pillow>=12.3.0",
+    "pypdf>=6.20.1",
+    "reportlab>=5.0.1",
+]
+
+[project.scripts]
+pdf-sign = "pdf_sign.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
